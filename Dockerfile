@@ -6,7 +6,8 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /zai2api ./cmd/main.go
 
-FROM golang:1.25-alpine
+FROM alpine:latest
+RUN apk add --no-cache ca-certificates
 WORKDIR /app
 COPY --from=builder /zai2api .
 EXPOSE 8000
