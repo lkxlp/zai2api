@@ -692,7 +692,16 @@ func HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// 处理工具调用
 	messages := req.Messages
 	if len(req.Tools) > 0 {
-		messages = ProcessMessagesWithTools(messages, req.Tools, req.ToolChoice)
+		// FORCE_TOOL_CHOICE_REQUIRED 环境变量：强制把 tool_choice 升级为 "required"
+		// GLM 系列模型在 auto 模式下经常忽略工具，强制 required 能显著提升触发率
+		toolChoice := req.ToolChoice
+		if Cfg.ForceToolChoiceRequired {
+			if tc, ok := toolChoice.(string); !ok || tc == "" || tc == "auto" {
+				toolChoice = "required"
+				LogDebug("[Tools] Forced tool_choice to 'required' (FORCE_TOOL_CHOICE_REQUIRED=true)")
+			}
+		}
+		messages = ProcessMessagesWithTools(messages, req.Tools, toolChoice)
 	}
 
 	inputTokens := CountRequestTokens(messages, req.Tools)

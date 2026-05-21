@@ -23,12 +23,13 @@ type Config struct {
 	CaptchaProviderURL string // e.g. http://127.0.0.1:9876
 
 	// Feature Configuration
-	DebugLogging  bool
-	ToolSupport   bool
-	RetryCount    int
-	SkipAuthToken bool
-	ScanLimit     int
-	LogLevel      string
+	DebugLogging            bool
+	ToolSupport             bool
+	ForceToolChoiceRequired bool
+	RetryCount              int
+	SkipAuthToken           bool
+	ScanLimit               int
+	LogLevel                string
 
 	// 匿名 token 池（无 TokenManager / BACKUP_TOKEN 时启用；已配置上游 token 时不使用池）
 	AnonymousPoolSize               int
@@ -120,12 +121,13 @@ func LoadConfig() {
 		CaptchaProviderURL:  getEnvString("CAPTCHA_PROVIDER_URL", ""),
 
 		// Feature Configuration
-		DebugLogging:  getEnvBool("DEBUG_LOGGING", false),
-		ToolSupport:   getEnvBool("TOOL_SUPPORT", true),
-		RetryCount:    getEnvInt("RETRY_COUNT", 5),
-		SkipAuthToken: getEnvBool("SKIP_AUTH_TOKEN", false),
-		ScanLimit:     getEnvInt("SCAN_LIMIT", 200000),
-		LogLevel:      getEnvString("LOG_LEVEL", "info"),
+		DebugLogging:            getEnvBool("DEBUG_LOGGING", false),
+		ToolSupport:             getEnvBool("TOOL_SUPPORT", true),
+		ForceToolChoiceRequired: getEnvBool("FORCE_TOOL_CHOICE_REQUIRED", false),
+		RetryCount:              getEnvInt("RETRY_COUNT", 5),
+		SkipAuthToken:           getEnvBool("SKIP_AUTH_TOKEN", false),
+		ScanLimit:               getEnvInt("SCAN_LIMIT", 200000),
+		LogLevel:                getEnvString("LOG_LEVEL", "info"),
 
 		AnonymousPoolSize:               getEnvInt("ANONYMOUS_POOL_SIZE", 4),
 		AnonymousTokenTTLSeconds:        getEnvInt("ANONYMOUS_TOKEN_TTL_SECONDS", 1200),
