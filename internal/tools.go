@@ -82,7 +82,55 @@ func GenerateToolPrompt(tools []Tool, toolChoice interface{}) string {
 	}
 
 	instructions := getToolChoiceInstructions(toolChoice, toolNames)
-	return "<tool_injection>\n<available_tools>\n" + strings.Join(toolDefs, "\n") + "\n</available_tools>\n" + instructions + "\n</tool_injection>"
+	examples := buildToolExamples(toolNames)
+
+	return "<tool_injection>\n<available_tools>\n" + strings.Join(toolDefs, "\n") + "\n</available_tools>\n" + instructions + examples + "\n</tool_injection>"
+}
+
+// buildToolExamples 用真实工具名生成强示例。
+// 灵感来自 CJackHwang/ds2api：用真实工具名 + 多个正负示例显著提升 GLM 类模型的工具调用率。
+func buildToolExamples(toolNames []string) string {
+	if len(toolNames) == 0 {
+		return ""
+	}
+	primary := toolNames[0]
+
+	// 尝试列出第一个工具的"single call"示例
+	example := fmt.Sprintf(`
+<correct_examples>
+<!-- 示例 1：调用单个工具 -->
+<tool_calls>
+  <tool_call id="call_1">
+    <name>%s</name>
+    <arguments><![CDATA[{}]]></arguments>
+  </tool_call>
+</tool_calls>
+</correct_examples>
+
+<wrong_examples>
+<!-- 错误 1：用文字假装调用，绝对禁止 -->
+我已经为您调用了 %s 工具，结果是 ...
+
+<!-- 错误 2：解释自己不能调用，绝对禁止 -->
+作为 AI 我无法直接执行工具，建议您...
+
+<!-- 错误 3：把 XML 包在 markdown 代码块里 -->
+` + "```" + `xml
+<tool_calls>...</tool_calls>
+` + "```" + `
+
+<!-- 错误 4：在 XML 后追加解释文字 -->
+<tool_calls>...</tool_calls>
+希望对您有帮助！
+</wrong_examples>
+
+<final_directive>
+你是一个能调用工具的智能体。这些工具是真实的、可执行的，会被外部系统接收并执行。
+当用户请求需要用到工具时，**直接输出 &lt;tool_calls&gt; XML 块，不要解释、不要道歉、不要假装无法调用**。
+工具会真的被调用，调用结果会在下一轮以 [工具返回结果] 标记返回给你。
+</final_directive>`, primary, primary)
+
+	return example
 }
 
 func getToolChoiceInstructions(toolChoice interface{}, toolNames []string) string {
@@ -159,6 +207,10 @@ func ProcessMessagesWithTools(messages []Message, tools []Tool, toolChoice inter
 		}
 	}
 
+	// 注入策略：同时把 toolPrompt 插进 system 消息和第一条 user 消息。
+	// 关键发现：z.ai 上游会丢弃/覆盖客户端传入的 system 消息（用平台自己的 "你是 GLM 助手" 覆盖）。
+	// 实测对 GLM-5.1 用 DIAGNOSTIC_KEYWORD 测试 system 消息，模型反馈"我没看到这个关键字"。
+	// 因此必须把工具说明追加到 user 消息，模型才能真正"看到"工具。
 	hasSystem := false
 	for i, msg := range processed {
 		if msg.Role == "system" {
@@ -170,12 +222,33 @@ func ProcessMessagesWithTools(messages []Message, tools []Tool, toolChoice inter
 	if !hasSystem {
 		systemMsg := Message{
 			Role:    "system",
-			Content: "<system_instructions>\n<assistant_identity>你是一个智能助手，能够帮助用户完成各种任务。</assistant_identity>\n" + toolPrompt + "\n</system_instructions>",
+			Content: "<system_instructions>\n<assistant_identity>你是一个能调用工具的智能助手。</assistant_identity>\n" + toolPrompt + "\n</system_instructions>",
 		}
 		processed = append([]Message{systemMsg}, processed...)
 	}
 
+	// 关键改进：把工具说明也注入到第一条 user 消息前面（user 消息 z.ai 不会覆盖）
+	for i, msg := range processed {
+		if msg.Role == "user" {
+			userToolBrief := "[可用工具说明 — 重要]\n" + toolPrompt + "\n\n[用户原始问题]\n"
+			processed[i].Content = prependTextToContent(msg.Content, userToolBrief)
+			break
+		}
+	}
+
 	return processed
+}
+
+// prependTextToContent 把 prefix 加到 content 前面（兼容字符串和复杂结构）
+func prependTextToContent(content interface{}, prefix string) interface{} {
+	switch v := content.(type) {
+	case string:
+		return prefix + v
+	case nil:
+		return prefix
+	default:
+		return prefix + fmt.Sprintf("%v", v)
+	}
 }
 func convertAssistantToolCallMessage(msg Message) Message {
 	content, _ := msg.ParseContent()
@@ -763,4 +836,62 @@ func removeInlineToolCallJSON(text string) string {
 func generateCallID() string {
 	seq := atomic.AddInt64(&callIDCounter, 1)
 	return fmt.Sprintf("call_%d_%d", time.Now().UnixMilli(), seq)
+}
+
+// repairTruncatedToolCallsXML 修复截断的 <tool_calls> XML（z.ai 上游有时会在 phase 切换时截断输出）
+// 如果发现未闭合的 <tool_calls> / <tool_call> / <arguments>，按嵌套层级补全闭合标签。
+func repairTruncatedToolCallsXML(text string) string {
+	if !strings.Contains(text, "<tool_calls>") {
+		return text
+	}
+	// 已经闭合，无需修复
+	if strings.Contains(text, "</tool_calls>") {
+		return text
+	}
+	// 自动补全：从最内层往外补
+	repaired := text
+	if strings.Contains(repaired, "<arguments>") && !strings.Contains(repaired, "</arguments>") {
+		// 处理 CDATA 未闭合
+		if strings.Contains(repaired, "<![CDATA[") && !strings.Contains(repaired, "]]>") {
+			repaired += "]]>"
+		}
+		repaired += "</arguments>"
+	}
+	if strings.Contains(repaired, "<tool_call ") || strings.Contains(repaired, "<tool_call>") {
+		// 计算 <tool_call ...> 和 </tool_call> 数量差
+		open := strings.Count(repaired, "<tool_call")
+		close := strings.Count(repaired, "</tool_call")
+		for i := close; i < open; i++ {
+			repaired += "</tool_call>"
+		}
+	}
+	if !strings.Contains(repaired, "</tool_calls>") {
+		repaired += "</tool_calls>"
+	}
+	return repaired
+}
+
+// ExtractToolInvocationsWithFallback 主要从 content 中提取工具调用，
+// 当 content 中找不到时回退到 reasoning_content（思考链）。
+// GLM 系列模型经常把工具调用 XML 写在思考链里而不是回复里。
+// 参考 CJackHwang/ds2api 的设计。
+func ExtractToolInvocationsWithFallback(content, reasoning string) []ToolCall {
+	// 先尝试修复 z.ai 截断的 XML
+	repairedContent := repairTruncatedToolCallsXML(content)
+	calls := ExtractToolInvocations(repairedContent)
+	if len(calls) > 0 {
+		if repairedContent != content {
+			LogDebug("[Tools] Successfully repaired truncated XML, found %d calls", len(calls))
+		}
+		return calls
+	}
+	if strings.TrimSpace(reasoning) == "" {
+		return calls
+	}
+	repairedReasoning := repairTruncatedToolCallsXML(reasoning)
+	calls = ExtractToolInvocations(repairedReasoning)
+	if len(calls) > 0 {
+		LogDebug("[Tools] Extracted %d tool calls from reasoning_content (fallback)", len(calls))
+	}
+	return calls
 }

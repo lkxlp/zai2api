@@ -800,6 +800,7 @@ func HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 func handleStreamResponse(w http.ResponseWriter, body io.ReadCloser, completionID, modelName string, inputTokens int64, includeUsage bool, tools []Tool) int64 {
 	var outputTokens int64
 	var fullContent strings.Builder
+	var fullReasoning strings.Builder // 累积思考链内容，工具调用回退解析用
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -902,6 +903,7 @@ func handleStreamResponse(w http.ResponseWriter, body io.ReadCloser, completionI
 
 				if reasoningContent != "" {
 					hasContent = true
+					fullReasoning.WriteString(reasoningContent) // 累积用于工具调用回退解析
 					chunk := ChatCompletionChunk{
 						ID:      completionID,
 						Object:  "chat.completion.chunk",
@@ -1186,7 +1188,7 @@ func handleStreamResponse(w http.ResponseWriter, body io.ReadCloser, completionI
 	var toolCalls []ToolCall
 	if len(tools) > 0 {
 		rawContent := fullContent.String()
-		toolCalls = ExtractToolInvocations(rawContent)
+		toolCalls = ExtractToolInvocationsWithFallback(rawContent, fullReasoning.String())
 		if len(toolCalls) > 0 {
 			stopReason = "tool_calls"
 			LogDebug("[Stream] Detected %d tool calls, sending tool_calls chunks", len(toolCalls))
@@ -1422,7 +1424,7 @@ func handleNonStreamResponse(w http.ResponseWriter, body io.ReadCloser, completi
 	stopReason := "stop"
 	var toolCalls []ToolCall
 	if len(tools) > 0 {
-		toolCalls = ExtractToolInvocations(fullContent)
+		toolCalls = ExtractToolInvocationsWithFallback(fullContent, fullReasoning)
 		fullContent = RemoveToolJSONContent(fullContent)
 		if len(toolCalls) > 0 {
 			stopReason = "tool_calls"
@@ -1459,6 +1461,7 @@ func handleStreamResponseWithRetry(w http.ResponseWriter, body io.ReadCloser, co
 	result := UpstreamResult{Success: true, HasContent: false}
 	var outputTokens int64
 	var fullContent strings.Builder
+	var fullReasoning strings.Builder // 累积思考链内容，工具调用回退解析用
 	var upstreamError string
 
 	flusher, ok := w.(http.Flusher)
@@ -1591,6 +1594,7 @@ func handleStreamResponseWithRetry(w http.ResponseWriter, body io.ReadCloser, co
 
 				if reasoningContent != "" {
 					hasContent = true
+					fullReasoning.WriteString(reasoningContent) // 累积用于工具调用回退解析
 					chunk := ChatCompletionChunk{
 						ID:      completionID,
 						Object:  "chat.completion.chunk",
@@ -1867,7 +1871,7 @@ func handleStreamResponseWithRetry(w http.ResponseWriter, body io.ReadCloser, co
 	stopReason := "stop"
 	var toolCalls []ToolCall
 	if hasTools {
-		toolCalls = ExtractToolInvocations(fullContent.String())
+		toolCalls = ExtractToolInvocationsWithFallback(fullContent.String(), fullReasoning.String())
 		if len(toolCalls) > 0 {
 			stopReason = "tool_calls"
 			for i, tc := range toolCalls {
@@ -2124,7 +2128,7 @@ func handleNonStreamResponseWithRetry(w http.ResponseWriter, body io.ReadCloser,
 	stopReason := "stop"
 	var toolCalls []ToolCall
 	if len(tools) > 0 {
-		toolCalls = ExtractToolInvocations(fullContent)
+		toolCalls = ExtractToolInvocationsWithFallback(fullContent, fullReasoning)
 		fullContent = RemoveToolJSONContent(fullContent)
 		if len(toolCalls) > 0 {
 			stopReason = "tool_calls"
