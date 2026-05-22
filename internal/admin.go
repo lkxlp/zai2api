@@ -210,32 +210,136 @@ func HandleAdminConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleAdminTokens GET /admin/api/tokens
-// 返回 BACKUP_TOKEN 列表的脱敏信息和健康度
+// 返回 BACKUP_TOKEN（环境变量，只读）+ TokenManager 管理的 token（可增删）
 func HandleAdminTokens(w http.ResponseWriter, r *http.Request) {
 	if !adminAuth(r) {
 		adminWriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
 
-	tokens := make([]map[string]interface{}, 0, len(Cfg.BackupTokens))
+	// BACKUP_TOKEN（只读，来自环境变量）
+	backupTokens := make([]map[string]interface{}, 0, len(Cfg.BackupTokens))
 	for i, t := range Cfg.BackupTokens {
 		entry := map[string]interface{}{
-			"index":   i,
-			"masked":  maskToken(t),
-			"length":  len(t),
+			"index":  i,
+			"masked": maskToken(t),
+			"length": len(t),
+			"source": "env",
 		}
-		// 解析 JWT payload 提取 email/id
 		if payload, err := DecodeJWTPayload(t); err == nil && payload != nil {
 			entry["user_id"] = payload.ID
 			entry["email"] = payload.Email
 		}
-		tokens = append(tokens, entry)
+		backupTokens = append(backupTokens, entry)
+	}
+
+	// TokenManager 管理的 token（动态可增删）
+	managed := GetTokenManager().ListTokens()
+	managedTokens := make([]map[string]interface{}, 0, len(managed))
+	for _, info := range managed {
+		entry := map[string]interface{}{
+			"token_full": info.Token, // 用于删除时的标识
+			"masked":     maskToken(info.Token),
+			"email":      info.Email,
+			"user_id":    info.UserID,
+			"valid":      info.Valid,
+			"use_count":  info.UseCount,
+			"source":     "managed",
+		}
+		if !info.LastChecked.IsZero() {
+			entry["last_checked"] = info.LastChecked.Format(time.RFC3339)
+		}
+		managedTokens = append(managedTokens, entry)
 	}
 
 	adminWriteJSON(w, http.StatusOK, map[string]interface{}{
-		"backup_tokens": tokens,
-		"total":         len(tokens),
+		"backup_tokens":  backupTokens,
+		"managed_tokens": managedTokens,
+		"total_backup":   len(backupTokens),
+		"total_managed":  len(managedTokens),
 	})
+}
+
+// HandleAdminTokenAdd POST /admin/api/tokens
+// body: {"token": "eyJ..."}
+func HandleAdminTokenAdd(w http.ResponseWriter, r *http.Request) {
+	if !adminAuth(r) {
+		adminWriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	if r.Method != http.MethodPost {
+		adminWriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var body struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		adminWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
+	info, err := GetTokenManager().AddToken(body.Token)
+	if err != nil {
+		adminWriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	adminWriteJSON(w, http.StatusOK, map[string]interface{}{
+		"ok":      true,
+		"token":   maskToken(info.Token),
+		"email":   info.Email,
+		"user_id": info.UserID,
+	})
+}
+
+// HandleAdminTokenDelete DELETE /admin/api/tokens
+// body: {"token": "完整的 token"}
+func HandleAdminTokenDelete(w http.ResponseWriter, r *http.Request) {
+	if !adminAuth(r) {
+		adminWriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	if r.Method != http.MethodDelete && r.Method != http.MethodPost {
+		adminWriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var body struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		adminWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
+	if err := GetTokenManager().RemoveToken(body.Token); err != nil {
+		adminWriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	adminWriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// HandleAdminTokenValidate POST /admin/api/tokens/validate
+// body: {"token": "完整的 token"}
+func HandleAdminTokenValidate(w http.ResponseWriter, r *http.Request) {
+	if !adminAuth(r) {
+		adminWriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	if r.Method != http.MethodPost {
+		adminWriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var body struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		adminWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
+	valid, err := GetTokenManager().ValidateTokenNow(body.Token)
+	if err != nil {
+		adminWriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	adminWriteJSON(w, http.StatusOK, map[string]bool{"ok": true, "valid": valid})
 }
 
 // HandleAdminModels GET /admin/api/models

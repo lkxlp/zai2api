@@ -425,6 +425,46 @@ table.tbl tbody tr:last-child td { border-bottom: none; }
 }
 .console.empty-state { color: var(--text-faint); font-style: italic; }
 
+/* ── Modal ── */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(43, 31, 61, 0.45);
+  backdrop-filter: blur(4px);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 20px;
+}
+.modal-mask.show { display: flex; }
+.modal {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  padding: 28px;
+  width: 100%;
+  max-width: 540px;
+  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--line);
+  animation: slideIn 0.2s ease;
+}
+.modal h3 {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.modal .modal-sub {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 18px;
+}
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 18px;
+}
+
 /* ── Responsive ── */
 @media (max-width: 760px) {
   .app { grid-template-columns: 1fr; }
@@ -546,14 +586,28 @@ table.tbl tbody tr:last-child td { border-bottom: none; }
       <div class="view-header">
         <div>
           <h2>🔑 Token 池</h2>
-          <p>当前配置的 Z.AI BACKUP_TOKEN 列表。要修改请通过环境变量重新部署。</p>
+          <p>Z.AI JWT Token 管理。环境变量配置的是只读的，下面"用户管理 Token"是动态可增删的，会持久化到 <code>data/tokens.txt</code>。</p>
         </div>
         <div class="actions">
+          <button class="btn btn-primary" onclick="openAddToken()">➕ 添加 Token</button>
           <button class="btn btn-ghost" onclick="loadTokens()">🔄 刷新</button>
         </div>
       </div>
 
+      <div class="card" style="margin-bottom: 20px;">
+        <div class="card-title">🔧 用户管理 Token <span class="badge info" id="managedCount">0</span></div>
+        <table class="tbl">
+          <thead>
+            <tr><th>邮箱</th><th>用户ID</th><th>Token (脱敏)</th><th>状态</th><th>使用次数</th><th>操作</th></tr>
+          </thead>
+          <tbody id="managedTokenBody">
+            <tr><td colspan="6" class="empty">加载中...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
       <div class="card">
+        <div class="card-title">🌍 环境变量 BACKUP_TOKEN <span class="badge muted" id="envCount">0</span> · 只读</div>
         <table class="tbl">
           <thead>
             <tr><th>#</th><th>邮箱</th><th>用户ID</th><th>Token (脱敏)</th><th>长度</th></tr>
@@ -693,6 +747,23 @@ table.tbl tbody tr:last-child td { border-bottom: none; }
   </main>
 </div>
 
+<!-- Modal: Add Token -->
+<div class="modal-mask" id="addTokenModal" onclick="if(event.target===this) closeAddToken()">
+  <div class="modal">
+    <h3>➕ 添加 Z.AI Token</h3>
+    <div class="modal-sub">把 Z.AI 浏览器里 localStorage 的 token 值粘贴在下面。可以一次粘贴多个，用换行分隔。</div>
+    <div class="form-row">
+      <label>JWT Token（每行一个）</label>
+      <textarea id="newTokenInput" placeholder="eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9..." style="min-height: 130px; font-family: 'JetBrains Mono', monospace; font-size: 12px;"></textarea>
+    </div>
+    <div id="addTokenErr" style="color: var(--red); font-size: 13px; min-height: 18px;"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeAddToken()">取消</button>
+      <button class="btn btn-primary" onclick="submitAddToken()" id="addTokenBtn">添加</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast-wrap" id="toastWrap"></div>
 
 <script>
@@ -829,10 +900,11 @@ async function loadOverview() {
 
     // Foot status
     const tokens = d.tokens;
-    $('tokenCount').textContent = tokens.backup_token_count;
+    const totalTokens = (tokens.backup_token_count || 0) + (tokens.valid_token_count || 0);
+    $('tokenCount').textContent = totalTokens;
     $('footStatus').innerHTML = `
       <div class="row"><span class="dot ok"></span>运行中</div>
-      <div class="faint" style="margin-top:4px;font-size:11px;">${tokens.backup_token_count} token · ${ms.length} 模型在跑</div>
+      <div class="faint" style="margin-top:4px;font-size:11px;">${totalTokens} token · ${ms.length} 模型在跑</div>
     `;
   } catch (e) {
     console.error(e);
@@ -845,22 +917,152 @@ async function loadTokens() {
     const r = await fetch('/admin/api/tokens');
     if (!r.ok) return;
     const d = await r.json();
-    const tbody = $('tokenBody');
-    if (d.backup_tokens.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="5" class="empty">没有配置 BACKUP_TOKEN，将走匿名访问（已被 z.ai 限制）</td></tr>';
+
+    // Managed tokens (动态)
+    const mt = d.managed_tokens || [];
+    const mTbody = $('managedTokenBody');
+    if (mt.length === 0) {
+      mTbody.innerHTML = '<tr><td colspan="6" class="empty">还没有添加 token，点击右上角"添加 Token"开始</td></tr>';
     } else {
-      tbody.innerHTML = d.backup_tokens.map(t => `
+      mTbody.innerHTML = mt.map(t => `
+        <tr>
+          <td>${escapeHtml(t.email || '—')}</td>
+          <td class="cell-mono">${escapeHtml(t.user_id || '—')}</td>
+          <td class="cell-mono">${escapeHtml(t.masked)}</td>
+          <td>${t.valid ? '<span class="badge ok">✓ 有效</span>' : '<span class="badge err">✗ 失效</span>'}</td>
+          <td>${t.use_count}</td>
+          <td>
+            <button class="btn btn-ghost" style="font-size:11px;padding:4px 8px;" onclick="validateToken('${escapeJs(t.token_full)}')">验证</button>
+            <button class="btn btn-danger" style="font-size:11px;padding:4px 8px;" onclick="deleteToken('${escapeJs(t.token_full)}', '${escapeJs(t.email || '')}')">删除</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+    $('managedCount').textContent = d.total_managed || 0;
+
+    // Backup tokens (env)
+    const bt = d.backup_tokens || [];
+    const bTbody = $('tokenBody');
+    if (bt.length === 0) {
+      bTbody.innerHTML = '<tr><td colspan="5" class="empty">未通过环境变量 BACKUP_TOKEN 配置任何 token</td></tr>';
+    } else {
+      bTbody.innerHTML = bt.map(t => `
         <tr>
           <td>${t.index}</td>
-          <td>${t.email || '—'}</td>
-          <td class="cell-mono">${t.user_id || '—'}</td>
-          <td class="cell-mono">${t.masked}</td>
+          <td>${escapeHtml(t.email || '—')}</td>
+          <td class="cell-mono">${escapeHtml(t.user_id || '—')}</td>
+          <td class="cell-mono">${escapeHtml(t.masked)}</td>
           <td>${t.length}</td>
         </tr>
       `).join('');
     }
-    $('tokenCount').textContent = d.total;
+    $('envCount').textContent = d.total_backup || 0;
+
+    // 顶部计数 = 总数
+    $('tokenCount').textContent = (d.total_backup || 0) + (d.total_managed || 0);
   } catch (e) { toast('加载 tokens 失败', 'err'); }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function escapeJs(s) {
+  return String(s).replace(/['"\\]/g, c => '\\' + c);
+}
+
+function openAddToken() {
+  $('addTokenModal').classList.add('show');
+  $('newTokenInput').value = '';
+  $('addTokenErr').textContent = '';
+  setTimeout(() => $('newTokenInput').focus(), 50);
+}
+function closeAddToken() {
+  $('addTokenModal').classList.remove('show');
+}
+async function submitAddToken() {
+  const raw = $('newTokenInput').value.trim();
+  if (!raw) {
+    $('addTokenErr').textContent = '请粘贴至少一个 token';
+    return;
+  }
+  const tokens = raw.split(/[\n\r]+/).map(s => s.trim()).filter(Boolean);
+  const btn = $('addTokenBtn');
+  btn.disabled = true;
+  btn.textContent = '添加中...';
+  $('addTokenErr').textContent = '';
+
+  let ok = 0, fail = 0;
+  const errors = [];
+  for (const tk of tokens) {
+    try {
+      const r = await fetch('/admin/api/tokens', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({token: tk}),
+      });
+      const d = await r.json();
+      if (r.ok && d.ok) {
+        ok++;
+      } else {
+        fail++;
+        errors.push(`${tk.slice(0,20)}...: ${d.error || '未知错误'}`);
+      }
+    } catch (e) {
+      fail++;
+      errors.push(`${tk.slice(0,20)}...: ${e.message}`);
+    }
+  }
+
+  btn.disabled = false;
+  btn.textContent = '添加';
+
+  if (ok > 0) toast(`添加成功 ${ok} 个 token`, 'ok');
+  if (fail > 0) {
+    $('addTokenErr').textContent = `失败 ${fail} 个: ` + errors.slice(0, 3).join('; ');
+  } else {
+    closeAddToken();
+  }
+  loadTokens();
+}
+
+async function deleteToken(token, email) {
+  if (!confirm(`确定删除 token (${email || '未知账户'})？此操作不可撤销。`)) return;
+  try {
+    const r = await fetch('/admin/api/tokens', {
+      method: 'DELETE',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({token}),
+    });
+    const d = await r.json();
+    if (r.ok) {
+      toast('已删除', 'ok');
+      loadTokens();
+    } else {
+      toast('删除失败: ' + (d.error || '未知错误'), 'err');
+    }
+  } catch (e) {
+    toast('网络错误: ' + e.message, 'err');
+  }
+}
+
+async function validateToken(token) {
+  toast('验证中...');
+  try {
+    const r = await fetch('/admin/api/tokens/validate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({token}),
+    });
+    const d = await r.json();
+    if (r.ok) {
+      toast(d.valid ? '✓ token 有效' : '✗ token 已失效', d.valid ? 'ok' : 'err');
+      loadTokens();
+    } else {
+      toast('验证失败: ' + (d.error || '未知错误'), 'err');
+    }
+  } catch (e) {
+    toast('网络错误: ' + e.message, 'err');
+  }
 }
 
 let allModels = [];

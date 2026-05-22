@@ -93,11 +93,19 @@ curl http://localhost:8000/v1/chat/completions \
 
 后台功能：
 - **📊 概览**：实时请求量、Token 消耗、Captcha Provider 状态、Top 5 调用模型
-- **🔑 Token 池**：查看 BACKUP_TOKEN 列表（含邮箱、用户ID 解析）
+- **🔑 Token 池**：双层 token 管理
+  - **环境变量 BACKUP_TOKEN**：只读，重启需重新部署修改
+  - **用户管理 Token**：动态增删，持久化到 `data/tokens.txt`，支持热加载、定期验证、支持批量粘贴
 - **🧠 模型**：56 个模型的映射关系，可搜索过滤
 - **🎮 Playground**：直接在后台测试任意模型
 - **⚙️ 配置**：当前生效的环境变量（敏感信息脱敏）
 - **💖 关于**：项目故事和已知缺陷
+
+> ⚠️ **持久化提醒**：要让用户管理 token 在容器重启后保留，记得挂载 `data` 目录：
+> ```bash
+> docker run -v /your/path/data:/app/data ...
+> ```
+> 参考 `deploy/zai2api.service` 里的 systemd 配置示例。
 
 ## ⚙️ 环境变量
 

@@ -105,9 +105,25 @@ func main() {
 	http.HandleFunc("/admin/api/logout", corsMiddleware(loggingMiddleware(internal.HandleAdminLogout)))
 	http.HandleFunc("/admin/api/overview", corsMiddleware(loggingMiddleware(internal.HandleAdminOverview)))
 	http.HandleFunc("/admin/api/config", corsMiddleware(loggingMiddleware(internal.HandleAdminConfig)))
-	http.HandleFunc("/admin/api/tokens", corsMiddleware(loggingMiddleware(internal.HandleAdminTokens)))
+
+	// Tokens：GET 列表 / POST 添加 / DELETE 删除 / POST validate 验证
+	http.HandleFunc("/admin/api/tokens", corsMiddleware(loggingMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			internal.HandleAdminTokens(w, r)
+		case http.MethodPost:
+			internal.HandleAdminTokenAdd(w, r)
+		case http.MethodDelete:
+			internal.HandleAdminTokenDelete(w, r)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	})))
+	http.HandleFunc("/admin/api/tokens/validate", corsMiddleware(loggingMiddleware(internal.HandleAdminTokenValidate)))
+
 	http.HandleFunc("/admin/api/models", corsMiddleware(loggingMiddleware(internal.HandleAdminModels)))
 	http.HandleFunc("/admin/api/test", corsMiddleware(loggingMiddleware(internal.HandleAdminTestModel)))
+
 
 	addr := ":" + internal.Cfg.Port
 	internal.LogInfo("Server starting on %s", addr)
