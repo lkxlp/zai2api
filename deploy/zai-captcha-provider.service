@@ -13,6 +13,9 @@ Environment=PORT=9876
 Environment=POOL_SIZE=3
 Environment=TOKEN_TTL=270000
 Environment=CHROMIUM_PATH=/usr/bin/chromium
+# BROWSER_BACKEND=cloak 用 CloakBrowser stealth chromium（推荐）
+# BROWSER_BACKEND=playwright 用普通 chromium + JS stealth 注入（备选）
+Environment=BROWSER_BACKEND=cloak
 
 # 资源限制：注意 - 不要加 CPUQuota，会因 chromium 启动慢导致 captcha 超时
 MemoryMax=4G

@@ -1,5 +1,6 @@
 import http from 'node:http';
 import { chromium } from 'playwright-core';
+import * as cloak from 'cloakbrowser';
 
 // ─── Config ───
 const PORT = Number(process.env.PORT || 9876);
@@ -8,6 +9,10 @@ const CHROMIUM_PATH = process.env.CHROMIUM_PATH || '/usr/bin/chromium';
 const SECRET = process.env.SECRET || '';
 const ZAI_URL = 'https://chat.z.ai/';
 const SCENE_ID = 'didk33e0';
+
+// BROWSER_BACKEND: 'cloak' | 'playwright'（默认 cloak，CloakBrowser stealth chromium）
+// CloakBrowser 二进制需要在 ~/.cloakbrowser/ 预先下载（首次启动会从 GitHub Releases 下载，需代理）
+const BROWSER_BACKEND = process.env.BROWSER_BACKEND || 'cloak';
 
 // Token 预取池配置
 const POOL_SIZE = Number(process.env.POOL_SIZE || 5);       // 池中保持的 token 数量
@@ -29,54 +34,65 @@ let refilling = false;
 // ─── Browser lifecycle ───
 
 async function launchBrowser() {
-  console.log('[provider] Launching headless Chromium...');
-  const launchOpts = {
-    executablePath: CHROMIUM_PATH,
-    headless: true,
-    args: [
-      '--disable-blink-features=AutomationControlled',
-      '--disable-dev-shm-usage',
-      '--no-sandbox',
-      '--disable-gpu',
-      '--disable-extensions',
-      '--disable-background-timer-throttling',
-      '--disable-renderer-backgrounding',
-    ],
-  };
-  // 如果设置了 PROXY_SERVER 环境变量，让 Chromium 走代理
-  // 用于绕过家宽 IP 触发的阿里云风控
-  const proxyURL = process.env.PROXY_SERVER || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
-  if (proxyURL) {
-    console.log(`[provider] Using proxy: ${proxyURL}`);
-    launchOpts.proxy = { server: proxyURL };
-  }
-  browser = await chromium.launch(launchOpts);
+  console.log(`[provider] Initializing browser backend: ${BROWSER_BACKEND}`);
 
-  context = await browser.newContext({
-    viewport: { width: 1920, height: 1080 },
-    locale: 'zh-CN',
-    timezoneId: 'Asia/Shanghai',
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
-  });
-
-  // Stealth patches 应用到 context（每个新 page 自动继承）
-  await context.addInitScript(() => {
-    Object.defineProperty(navigator, 'webdriver', { get: () => false });
-    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-    Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en-US', 'en'] });
-    window.chrome = { runtime: {}, loadTimes: () => ({}) };
-    const originalQuery = window.navigator.permissions?.query;
-    if (originalQuery) {
-      window.navigator.permissions.query = (params) =>
-        params.name === 'notifications'
-          ? Promise.resolve({ state: Notification.permission })
-          : originalQuery(params);
+  if (BROWSER_BACKEND === 'cloak') {
+    // CloakBrowser: 验证 binary 可用并预热（只启动一次然后关闭，acquire 时再每次新建）
+    try {
+      const test = await cloak.launch({ headless: true });
+      const v = await test.version();
+      console.log(`[provider] CloakBrowser ready (chromium ${v})`);
+      await test.close();
+    } catch (e) {
+      console.error('[provider] CloakBrowser init failed:', e.message);
+      throw e;
     }
-  });
+  } else {
+    const launchOpts = {
+      executablePath: CHROMIUM_PATH,
+      headless: true,
+      args: [
+        '--disable-blink-features=AutomationControlled',
+        '--disable-dev-shm-usage',
+        '--no-sandbox',
+        '--disable-gpu',
+        '--disable-extensions',
+        '--disable-background-timer-throttling',
+        '--disable-renderer-backgrounding',
+      ],
+    };
+    const proxyURL = process.env.PROXY_SERVER || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+    if (proxyURL) {
+      console.log(`[provider] Using proxy: ${proxyURL}`);
+      launchOpts.proxy = { server: proxyURL };
+    }
+    browser = await chromium.launch(launchOpts);
 
-  // 不再创建预热 page —— 测试发现复用 context+预热 page 会触发阿里云风控
-  // 每次 acquireToken 都从全新 browser 启动（见 acquireToken 实现）
-  console.log('[provider] ✓ Browser & context ready');
+    // playwright 后端复用 context（cloak 后端不用，因为每次 acquire 都启新 browser）
+    context = await browser.newContext({
+      viewport: { width: 1920, height: 1080 },
+      locale: 'zh-CN',
+      timezoneId: 'Asia/Shanghai',
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
+    });
+
+    // Stealth patches（playwright 后端用 JS 注入，cloak 内置 C++ patch 不需要）
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+      Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+      Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en-US', 'en'] });
+      window.chrome = { runtime: {}, loadTimes: () => ({}) };
+      const originalQuery = window.navigator.permissions?.query;
+      if (originalQuery) {
+        window.navigator.permissions.query = (params) =>
+          params.name === 'notifications'
+            ? Promise.resolve({ state: Notification.permission })
+            : originalQuery(params);
+      }
+    });
+  }
+
+  console.log('[provider] ✓ Browser ready');
   ready = true;
 }
 
@@ -85,22 +101,35 @@ async function launchBrowser() {
 // 每次 acquireToken 都创建一个全新的 browser process，完成后立即关闭。
 // 测试发现复用 browser/context 会被阿里云风控（同一 session 多次 init 触发限速），
 // 但每次新 browser process 跑 probe 能稳定 0.7 秒拿到 token。
+//
+// BROWSER_BACKEND=cloak: 使用 CloakBrowser（C++ 源码级 stealth patch chromium，更难被反爬识别）
+// BROWSER_BACKEND=playwright: 使用普通 chromium + JS stealth 补丁（fallback）
 async function acquireToken() {
-  const launchOpts = {
-    executablePath: CHROMIUM_PATH,
-    headless: true,
-    args: [
-      '--disable-blink-features=AutomationControlled',
-      '--disable-dev-shm-usage',
-      '--no-sandbox',
-      '--disable-gpu',
-      '--disable-extensions',
-    ],
-  };
-  const proxyURL = process.env.PROXY_SERVER || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
-  if (proxyURL) launchOpts.proxy = { server: proxyURL };
+  let localBrowser;
 
-  const localBrowser = await chromium.launch(launchOpts);
+  if (BROWSER_BACKEND === 'cloak') {
+    // CloakBrowser 内置 stealth，不需要手工 args / addInitScript
+    const opts = { headless: true };
+    const proxyURL = process.env.PROXY_SERVER || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+    if (proxyURL) opts.proxy = { server: proxyURL };
+    localBrowser = await cloak.launch(opts);
+  } else {
+    const launchOpts = {
+      executablePath: CHROMIUM_PATH,
+      headless: true,
+      args: [
+        '--disable-blink-features=AutomationControlled',
+        '--disable-dev-shm-usage',
+        '--no-sandbox',
+        '--disable-gpu',
+        '--disable-extensions',
+      ],
+    };
+    const proxyURL = process.env.PROXY_SERVER || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+    if (proxyURL) launchOpts.proxy = { server: proxyURL };
+    localBrowser = await chromium.launch(launchOpts);
+  }
+
   try {
     const localCtx = await localBrowser.newContext({
       viewport: { width: 1920, height: 1080 },
