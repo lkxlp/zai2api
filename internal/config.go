@@ -26,7 +26,7 @@ type Config struct {
 	DebugLogging            bool
 	ToolSupport             bool
 	ForceToolChoiceRequired bool
-	UseAgentMode            bool // 启用 z.ai Agent 模式（推荐用于工具调用）
+	UseAgentMode            bool // 已废弃：z.ai 内部 agent 模式不返回 tool_calls，无用，保留兼容
 	RetryCount              int
 	SkipAuthToken           bool
 	ScanLimit               int
@@ -125,7 +125,7 @@ func LoadConfig() {
 		DebugLogging:            getEnvBool("DEBUG_LOGGING", false),
 		ToolSupport:             getEnvBool("TOOL_SUPPORT", true),
 		ForceToolChoiceRequired: getEnvBool("FORCE_TOOL_CHOICE_REQUIRED", false),
-		UseAgentMode:            getEnvBool("USE_AGENT_MODE", true),  // 默认开启 - z.ai 原生工具调用
+		UseAgentMode:            getEnvBool("USE_AGENT_MODE", false), // 已废弃，默认关闭
 		RetryCount:              getEnvInt("RETRY_COUNT", 5),
 		SkipAuthToken:           getEnvBool("SKIP_AUTH_TOKEN", false),
 		ScanLimit:               getEnvInt("SCAN_LIMIT", 200000),

@@ -220,23 +220,20 @@ func updateDynamicMappings(models []ZAIModel) {
 }
 
 // modelSuffixes 可用的后缀组合
-// -agent 后缀会启用 z.ai Agent 模式（模型可调用内置工具如 web_search/code_runner 等）
+// 注：曾尝试 -agent 后缀绑定 z.ai 内部 agent 模式，但发现该模式不返回 tool_calls，
+// 不能让外部客户端真正调用工具，已移除。工具调用走标准 prompt injection。
 var modelSuffixes = []string{
 	"-thinking",        // 思考
 	"-search",          // 搜索
 	"-thinking-search", // 思考+搜索
-	"-agent",           // Agent 模式（z.ai 内置工具）
-	"-thinking-agent",  // 思考+Agent
 }
 
-// isBaseSuffixModel 判断模型是否为基础模型（不含 -Thinking/-Search/-Agent 后缀）从而可以生成后缀组合
+// isBaseSuffixModel 判断模型是否为基础模型（不含已知后缀）
 func isBaseSuffixModel(modelID string) bool {
 	idLower := strings.ToLower(modelID)
 	return !strings.HasSuffix(idLower, "-thinking") &&
 		!strings.HasSuffix(idLower, "-search") &&
-		!strings.HasSuffix(idLower, "-thinking-search") &&
-		!strings.HasSuffix(idLower, "-agent") &&
-		!strings.HasSuffix(idLower, "-thinking-agent")
+		!strings.HasSuffix(idLower, "-thinking-search")
 }
 
 // GetAvailableModels 获取所有可用模型，包括内置 + 动态 + 后缀组合

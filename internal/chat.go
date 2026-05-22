@@ -264,26 +264,6 @@ func makeUpstreamRequest(token string, messages []Message, model string, imageUR
 	requestID := uuid.New().String()
 	userMsgID := uuid.New().String()
 
-	// Agent 模式启用条件：
-	// 1) 客户端用了 `-agent` 后缀模型（显式选择） — 推荐方式
-	// 2) 客户端传了 tools 字段且 USE_AGENT_MODE=true（兼容方式，但 z.ai agent 不返回 tool_calls）
-	// 用户带 -agent 后缀就一定启用 agent 模式（不依赖 tools）
-	useAgent := IsAgentModel(model) || (hasTools && Cfg.UseAgentMode)
-
-	// Agent 模式：先创建 z.ai 颁发的 chat_id 并初始化 workspace
-	// 否则 chat_completions 会返回 INTERNAL_ERROR
-	if useAgent {
-		latestUC := extractLatestUserContent(messages)
-		session, err := PrepareAgentSession(token, latestUC, model)
-		if err != nil {
-			LogWarn("[AgentMode] PrepareAgentSession failed: %v", err)
-		} else {
-			chatID = session.ChatID
-			userMsgID = session.UserMsgID
-			LogDebug("[AgentMode] Using chat_id=%s, user_msg_id=%s", chatID, userMsgID)
-		}
-	}
-
 	// 使用新的模型映射系统
 	mapping := GetUpstreamConfig(model)
 	var targetModel string
@@ -388,18 +368,13 @@ func makeUpstreamRequest(token string, messages []Message, model string, imageUR
 		upstreamMessages = append(upstreamMessages, msg.ToUpstreamMessage(urlToFileID))
 	}
 
-	// 当客户端带 -agent 后缀模型 OR 传了 tools 时启用 z.ai Agent 模式（flags=["general_agent"]）。
-	// 这是 z.ai 官网"Agent 模式"切换器在做的事情，能让模型真正调用内置工具。
+	// 普通 chat 模式（不使用 z.ai 内部 agent）。
+	// 工具调用通过 prompt injection 实现，模型输出 XML 工具调用 → 解析为 OpenAI tool_calls。
+	// z.ai agent 模式虽然能调用内置工具但不返回 tool_calls 字段，对外部客户端无用，已废弃。
 	flags := []string{}
 	previewMode := false
 	imageGen := true
 	webSearch := true
-	if useAgent {
-		flags = append(flags, "general_agent")
-		previewMode = true
-		imageGen = false
-		webSearch = false
-	}
 
 	body := map[string]interface{}{
 		"stream":           true,
@@ -423,27 +398,7 @@ func makeUpstreamRequest(token string, messages []Message, model string, imageUR
 		"id":      uuid.New().String(),
 	}
 
-	// Agent 模式必填字段
-	if useAgent {
-		body["current_user_message_id"] = userMsgID
-		body["current_user_message_parent_id"] = nil
-		body["background_tasks"] = map[string]bool{
-			"title_generation": true,
-			"tags_generation":  true,
-		}
-		// agent 模式期望 variables 字段（用户上下文）
-		now := time.Now()
-		body["variables"] = map[string]string{
-			"{{USER_NAME}}":        "user",
-			"{{USER_LOCATION}}":    "Unknown",
-			"{{CURRENT_DATETIME}}": now.Format("2006-01-02 15:04:05"),
-			"{{CURRENT_DATE}}":     now.Format("2006-01-02"),
-			"{{CURRENT_TIME}}":     now.Format("15:04:05"),
-			"{{CURRENT_WEEKDAY}}":  now.Format("Monday"),
-			"{{CURRENT_TIMEZONE}}": "Asia/Shanghai",
-			"{{USER_LANGUAGE}}":    "zh-CN",
-		}
-	}
+	// (Agent 模式相关字段已移除 — z.ai agent 不返回 tool_calls，对外部客户端无用)
 
 	// 原生 function calling：把 tools 传给上游，设置 params.function_calling = "native"
 	// 注意：z.ai 的原生 function calling 格式可能和 OpenAI 不同，暂时禁用
@@ -752,8 +707,18 @@ func HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	messages := req.Messages
 	// Agent 模式由 z.ai 上游原生支持工具调用，不需要 prompt injection
 	// 只在传统 chat 模式（无 agent flag）时才注入工具 prompt
-	if len(req.Tools) > 0 && !Cfg.UseAgentMode {
-		messages = ProcessMessagesWithTools(messages, req.Tools, req.ToolChoice)
+	// 工具调用：通过 prompt injection 让模型输出 XML 工具调用，
+	// 我们在响应里解析回 OpenAI 格式 tool_calls。
+	if len(req.Tools) > 0 {
+		// FORCE_TOOL_CHOICE_REQUIRED：把没指定 tool_choice / auto 的请求升级为 required
+		toolChoice := req.ToolChoice
+		if Cfg.ForceToolChoiceRequired {
+			if tc, ok := toolChoice.(string); !ok || tc == "" || tc == "auto" {
+				toolChoice = "required"
+				LogDebug("[Tools] Forced tool_choice to 'required'")
+			}
+		}
+		messages = ProcessMessagesWithTools(messages, req.Tools, toolChoice)
 	}
 
 	inputTokens := CountRequestTokens(messages, req.Tools)
