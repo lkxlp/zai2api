@@ -264,6 +264,21 @@ func makeUpstreamRequest(token string, messages []Message, model string, imageUR
 	requestID := uuid.New().String()
 	userMsgID := uuid.New().String()
 
+	// Agent 模式：先创建 z.ai 颁发的 chat_id 并初始化 workspace
+	// 否则 chat_completions 会返回 INTERNAL_ERROR
+	if hasTools && Cfg.UseAgentMode {
+		latestUC := extractLatestUserContent(messages)
+		// 模型映射的 upstream id 还没算出来，先用 model 原值
+		session, err := PrepareAgentSession(token, latestUC, model)
+		if err != nil {
+			LogWarn("[AgentMode] PrepareAgentSession failed: %v", err)
+		} else {
+			chatID = session.ChatID
+			userMsgID = session.UserMsgID
+			LogDebug("[AgentMode] Using chat_id=%s, user_msg_id=%s", chatID, userMsgID)
+		}
+	}
+
 	// 使用新的模型映射系统
 	mapping := GetUpstreamConfig(model)
 	var targetModel string
@@ -368,22 +383,63 @@ func makeUpstreamRequest(token string, messages []Message, model string, imageUR
 		upstreamMessages = append(upstreamMessages, msg.ToUpstreamMessage(urlToFileID))
 	}
 
+	// 当客户端传了 tools 时启用 z.ai Agent 模式（flags=["general_agent"]）。
+	// 这是 z.ai 官网"Agent 模式"切换器在做的事情，能让模型真正调用内置工具。
+	// 控制开关：USE_AGENT_MODE=true（默认）。如果想退回 prompt injection 模式可以关掉。
+	useAgentForTools := hasTools && Cfg.UseAgentMode
+	flags := []string{}
+	previewMode := false
+	imageGen := true
+	webSearch := true
+	if useAgentForTools {
+		flags = append(flags, "general_agent")
+		previewMode = true
+		imageGen = false
+		webSearch = false
+	}
+
 	body := map[string]interface{}{
 		"stream":           true,
 		"model":            targetModel,
 		"messages":         upstreamMessages,
 		"signature_prompt": latestUserContent,
 		"params":           map[string]interface{}{},
+		"extra":            map[string]interface{}{},
 		"features": map[string]interface{}{
-			"image_generation": true,
-			"web_search":       true,
-			"auto_web_search":  autoWebSearch && !hasTools,
-			"preview_mode":     false,
-			"flags":            []string{},
-			"enable_thinking":  enableThinking,
+			"image_generation":      imageGen,
+			"web_search":            webSearch,
+			"auto_web_search":       autoWebSearch && !hasTools,
+			"preview_mode":          previewMode,
+			"flags":                 flags,
+			"vlm_tools_enable":      false,
+			"vlm_web_search_enable": false,
+			"vlm_website_mode":      false,
+			"enable_thinking":       enableThinking,
 		},
 		"chat_id": chatID,
 		"id":      uuid.New().String(),
+	}
+
+	// Agent 模式必填字段
+	if useAgentForTools {
+		body["current_user_message_id"] = userMsgID
+		body["current_user_message_parent_id"] = nil
+		body["background_tasks"] = map[string]bool{
+			"title_generation": true,
+			"tags_generation":  true,
+		}
+		// agent 模式期望 variables 字段（用户上下文）
+		now := time.Now()
+		body["variables"] = map[string]string{
+			"{{USER_NAME}}":        "user",
+			"{{USER_LOCATION}}":    "Unknown",
+			"{{CURRENT_DATETIME}}": now.Format("2006-01-02 15:04:05"),
+			"{{CURRENT_DATE}}":     now.Format("2006-01-02"),
+			"{{CURRENT_TIME}}":     now.Format("15:04:05"),
+			"{{CURRENT_WEEKDAY}}":  now.Format("Monday"),
+			"{{CURRENT_TIMEZONE}}": "Asia/Shanghai",
+			"{{USER_LANGUAGE}}":    "zh-CN",
+		}
 	}
 
 	// 原生 function calling：把 tools 传给上游，设置 params.function_calling = "native"
@@ -691,17 +747,10 @@ func HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	// 处理工具调用
 	messages := req.Messages
-	if len(req.Tools) > 0 {
-		// FORCE_TOOL_CHOICE_REQUIRED 环境变量：强制把 tool_choice 升级为 "required"
-		// GLM 系列模型在 auto 模式下经常忽略工具，强制 required 能显著提升触发率
-		toolChoice := req.ToolChoice
-		if Cfg.ForceToolChoiceRequired {
-			if tc, ok := toolChoice.(string); !ok || tc == "" || tc == "auto" {
-				toolChoice = "required"
-				LogDebug("[Tools] Forced tool_choice to 'required' (FORCE_TOOL_CHOICE_REQUIRED=true)")
-			}
-		}
-		messages = ProcessMessagesWithTools(messages, req.Tools, toolChoice)
+	// Agent 模式由 z.ai 上游原生支持工具调用，不需要 prompt injection
+	// 只在传统 chat 模式（无 agent flag）时才注入工具 prompt
+	if len(req.Tools) > 0 && !Cfg.UseAgentMode {
+		messages = ProcessMessagesWithTools(messages, req.Tools, req.ToolChoice)
 	}
 
 	inputTokens := CountRequestTokens(messages, req.Tools)
