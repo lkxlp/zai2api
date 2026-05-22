@@ -109,7 +109,12 @@ async function acquireToken() {
 
   if (BROWSER_BACKEND === 'cloak') {
     // CloakBrowser 内置 stealth，不需要手工 args / addInitScript
-    const opts = { headless: true };
+    // 但必须在 launch 时传 userAgent（不能放 newContext 里，那样不改 HTTP header）
+    // UA 必须跟 Go 主代理 (Chrome/133) 对齐，否则 z.ai 会因 captcha token 与 chat 请求 UA 不一致而返回 verify_failed
+    const opts = {
+      headless: true,
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
+    };
     const proxyURL = process.env.PROXY_SERVER || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
     if (proxyURL) opts.proxy = { server: proxyURL };
     localBrowser = await cloak.launch(opts);
