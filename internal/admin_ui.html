@@ -1195,7 +1195,7 @@ async function copyPgOutput() {
   const text = $('pgOutput').textContent;
   if (!text || text.startsWith('在左侧')) { toast('没有内容可复制', 'err'); return; }
   try {
-    await navigator.clipboard.writeText(text);
+    await copyTextToClipboard(text);
     toast('已复制到剪贴板', 'ok');
   } catch (e) {
     toast('复制失败: ' + e.message, 'err');
@@ -1287,15 +1287,40 @@ async function submitCreateKey() {
 async function copyNewKey() {
   if (window.__lastNewKey) {
     try {
-      await navigator.clipboard.writeText(window.__lastNewKey);
+      await copyTextToClipboard(window.__lastNewKey);
       toast('已复制 API Key', 'ok');
     } catch (e) { toast('复制失败: ' + e.message, 'err'); }
   }
 }
 
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  textarea.style.top = '0';
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+
+  try {
+    if (!document.execCommand('copy')) {
+      throw new Error('copy command rejected');
+    }
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
+
 async function copyToClipboard(text) {
   try {
-    await navigator.clipboard.writeText(text);
+    await copyTextToClipboard(text);
     toast('已复制', 'ok');
   } catch (e) { toast('复制失败', 'err'); }
 }

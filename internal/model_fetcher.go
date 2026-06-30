@@ -86,6 +86,11 @@ func initBuiltinMappings() {
 	registerBuiltinModel("GLM-5-Search", "glm-5", "GLM-5-Search", true, true, true, []string{"advanced-search", "deep-web-search"})
 	registerBuiltinModel("GLM-5-Turbo", "GLM-5-Turbo", "GLM-5-Turbo", true, false, true, []string{"advanced-search"})
 	registerBuiltinModel("GLM-5v-Turbo", "GLM-5v-Turbo", "GLM-5v-Turbo", true, false, true, []string{"advanced-search", "vlm-image-search", "vlm-image-recognition", "vlm-image-processing"})
+	// GLM-5.2 on the web app exposes extra workspace MCP tools such as vibe-coding
+	// and ppt-maker, but those server-side tool sessions are brittle in proxy usage
+	// and can fail the whole request with WORKSPACE_TOOL_INIT_ERROR. Keep the default
+	// mapping on the stable search toolchain so plain chat completions stay usable.
+	registerBuiltinModel("GLM-5.2", "glm-5.2", "GLM-5.2", true, false, true, []string{"advanced-search", "deep-web-search"})
 	registerBuiltinModel("GLM-5.1", "GLM-5.1", "GLM-5.1", true, false, true, []string{"advanced-search"})
 	registerBuiltinModel("glm-4-flash", "glm-4-flash", "glm-4-flash", true, false, true, []string{"advanced-search"})
 	registerBuiltinModel("glm-4-air-250414", "glm-4-air-250414", "glm-4-air-250414", true, false, true, []string{"advanced-search"})
@@ -107,6 +112,18 @@ func GetModelMapping(modelID string) (ModelMapping, bool) {
 	}
 	if mapping, ok := modelMappings[modelID]; ok {
 		return mapping, true
+	}
+	for id, mapping := range modelMappings {
+		if strings.EqualFold(id, baseModel) || strings.EqualFold(id, modelID) {
+			if enableThinking {
+				mapping.EnableThinking = true
+			}
+			if enableSearch {
+				mapping.WebSearch = true
+				mapping.AutoWebSearch = true
+			}
+			return mapping, true
+		}
 	}
 	return ModelMapping{}, false
 }

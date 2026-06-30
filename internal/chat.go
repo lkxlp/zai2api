@@ -123,8 +123,12 @@ func extractAllMediaURLs(messages []Message) (imageURLs, videoURLs []string) {
 }
 
 func buildBrowserFingerprintQuery(timestamp int64, requestID, userID, token, chatID string) string {
-	currentURL := fmt.Sprintf("https://chat.z.ai/c/%s", chatID)
-	pathname := fmt.Sprintf("/c/%s", chatID)
+	currentURL := "https://chat.z.ai/"
+	pathname := "/"
+	if chatID != "" {
+		currentURL = fmt.Sprintf("https://chat.z.ai/c/%s", chatID)
+		pathname = fmt.Sprintf("/c/%s", chatID)
+	}
 	localTime := time.UnixMilli(timestamp).UTC().Format("2006-01-02T15:04:05.000Z")
 	utcTime := time.UnixMilli(timestamp).UTC().Format(time.RFC1123)
 
@@ -156,7 +160,7 @@ func buildBrowserFingerprintQuery(timestamp int64, requestID, userID, token, cha
 	q.Set("hostname", "chat.z.ai")
 	q.Set("protocol", "https:")
 	q.Set("referrer", "")
-	q.Set("title", "Z.ai - Free AI Chatbot & Agent powered by GLM-5.1 & GLM-5")
+	q.Set("title", "Z.ai - Free AI Chatbot & Agent powered by GLM-5.2")
 	q.Set("timezone_offset", "-480")
 	q.Set("local_time", localTime)
 	q.Set("utc_time", utcTime)
@@ -181,18 +185,22 @@ type bridgeUpstreamResponse struct {
 
 func makeBridgeRequest(upstreamURL, token, signature string, bodyBytes []byte, randomIP string) (*fhttp.Response, error) {
 	bridgeURL := strings.TrimRight(Cfg.BrowserBridgeURL, "/") + "/v1/upstream"
+	headers := map[string]string{
+		"Authorization":   "Bearer " + token,
+		"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+		"X-FE-Version":    GetFeVersion(),
+		"X-Signature":     signature,
+		"Content-Type":    "application/json",
+	}
+	if randomIP != "" {
+		headers["X-Forwarded-For"] = randomIP
+		headers["X-Real-IP"] = randomIP
+	}
 	payload := map[string]interface{}{
-		"method": "POST",
-		"url":    upstreamURL,
-		"headers": map[string]string{
-			"Authorization":   "Bearer " + token,
-			"X-FE-Version":    GetFeVersion(),
-			"X-Signature":     signature,
-			"Content-Type":    "application/json",
-			"X-Forwarded-For": randomIP,
-			"X-Real-IP":       randomIP,
-		},
-		"body": string(bodyBytes),
+		"method":  "POST",
+		"url":     upstreamURL,
+		"headers": headers,
+		"body":    string(bodyBytes),
 	}
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -223,21 +231,21 @@ func makeBridgeRequest(upstreamURL, token, signature string, bodyBytes []byte, r
 		return nil, err
 	}
 	if bridgeResp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("browser bridge status %d: %s", bridgeResp.StatusCode, string(bridgeBody)[:min(500, len(bridgeBody))])
+		return nil, fmt.Errorf("浏览器桥接服务状态 %d: %s", bridgeResp.StatusCode, string(bridgeBody)[:min(500, len(bridgeBody))])
 	}
 
 	var decoded bridgeUpstreamResponse
 	if err := json.Unmarshal(bridgeBody, &decoded); err != nil {
-		return nil, fmt.Errorf("decode browser bridge response: %w", err)
+		return nil, fmt.Errorf("解析浏览器桥接服务响应失败: %w", err)
 	}
 	if !decoded.OK {
 		if decoded.Error == "" {
-			decoded.Error = "unknown browser bridge error"
+			decoded.Error = "未知浏览器桥接服务错误"
 		}
-		return nil, fmt.Errorf("browser bridge error: %s", decoded.Error)
+		return nil, fmt.Errorf("浏览器桥接服务错误: %s", decoded.Error)
 	}
 	if decoded.Status == 0 {
-		return nil, fmt.Errorf("browser bridge returned empty upstream status")
+		return nil, fmt.Errorf("浏览器桥接服务返回了空的上游状态码")
 	}
 
 	resp := &fhttp.Response{
@@ -255,14 +263,15 @@ func makeBridgeRequest(upstreamURL, token, signature string, bodyBytes []byte, r
 func makeUpstreamRequest(token string, messages []Message, model string, imageURLs, videoURLs []string, hasTools bool, tools []Tool) (*fhttp.Response, string, error) {
 	payload, err := DecodeJWTPayload(token)
 	if err != nil || payload == nil {
-		return nil, "", fmt.Errorf("invalid token")
+		return nil, "", fmt.Errorf("无效 token")
 	}
 
 	userID := payload.ID
-	chatID := uuid.New().String()
+	chatID := ""
 	timestamp := time.Now().UnixMilli()
 	requestID := uuid.New().String()
 	userMsgID := uuid.New().String()
+	assistantMsgID := uuid.New().String()
 
 	// 使用新的模型映射系统
 	mapping := GetUpstreamConfig(model)
@@ -374,28 +383,35 @@ func makeUpstreamRequest(token string, messages []Message, model string, imageUR
 	flags := []string{}
 	previewMode := false
 	imageGen := true
-	webSearch := true
+	webSearch := false
+	features := map[string]interface{}{
+		"image_generation":      imageGen,
+		"web_search":            webSearch,
+		"auto_web_search":       autoWebSearch && !hasTools,
+		"preview_mode":          previewMode,
+		"flags":                 flags,
+		"vlm_tools_enable":      false,
+		"vlm_web_search_enable": false,
+		"vlm_website_mode":      false,
+		"enable_thinking":       enableThinking,
+	}
+	if strings.EqualFold(targetModel, "glm-5.2") && enableThinking {
+		features["reasoning_effort"] = "max"
+	}
 
 	body := map[string]interface{}{
-		"stream":           true,
-		"model":            targetModel,
-		"messages":         upstreamMessages,
-		"signature_prompt": latestUserContent,
-		"params":           map[string]interface{}{},
-		"extra":            map[string]interface{}{},
-		"features": map[string]interface{}{
-			"image_generation":      imageGen,
-			"web_search":            webSearch,
-			"auto_web_search":       autoWebSearch && !hasTools,
-			"preview_mode":          previewMode,
-			"flags":                 flags,
-			"vlm_tools_enable":      false,
-			"vlm_web_search_enable": false,
-			"vlm_website_mode":      false,
-			"enable_thinking":       enableThinking,
-		},
-		"chat_id": chatID,
-		"id":      uuid.New().String(),
+		"stream":                         true,
+		"model":                          targetModel,
+		"messages":                       upstreamMessages,
+		"signature_prompt":               latestUserContent,
+		"params":                         map[string]interface{}{},
+		"extra":                          map[string]interface{}{},
+		"features":                       features,
+		"variables":                      map[string]interface{}{},
+		"chat_id":                        chatID,
+		"id":                             assistantMsgID,
+		"current_user_message_id":        userMsgID,
+		"current_user_message_parent_id": nil,
 	}
 
 	// (Agent 模式相关字段已移除 — z.ai agent 不返回 tool_calls，对外部客户端无用)
@@ -413,8 +429,8 @@ func makeUpstreamRequest(token string, messages []Message, model string, imageUR
 		body["mcp_servers"] = mcpServers
 	}
 
-	// 注入 captcha_verify_param（如果配置了 captcha provider）
-	if Cfg.CaptchaProviderURL != "" {
+	// 直连模式下由 captcha provider 预取 token；browser bridge 模式下由 bridge 在同页请求中注入。
+	if Cfg.CaptchaProviderURL != "" && Cfg.BrowserBridgeURL == "" {
 		captchaToken, err := fetchCaptchaToken()
 		if err != nil {
 			LogWarn("[Captcha] Failed to get captcha token: %v", err)
@@ -440,8 +456,6 @@ func makeUpstreamRequest(token string, messages []Message, model string, imageUR
 		return nil, "", err
 	}
 
-	randomIP := generateRandomIP()
-
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("X-FE-Version", GetFeVersion())
 	req.Header.Set("X-Signature", signature)
@@ -450,10 +464,20 @@ func makeUpstreamRequest(token string, messages []Message, model string, imageUR
 	req.Header.Set("Origin", "https://chat.z.ai")
 	req.Header.Set("Referer", fmt.Sprintf("https://chat.z.ai/c/%s", chatID))
 	ApplyBrowserFingerprintHeaders(req.Header)
-	req.Header.Set("X-Forwarded-For", randomIP)
-	req.Header.Set("X-Real-IP", randomIP)
 
-	LogDebug("Upstream request: model=%s, messages=%d, XFF=%s", targetModel, len(messages), randomIP)
+	useSpoofedIP := Cfg.CaptchaProviderURL == "" && Cfg.BrowserBridgeURL == ""
+	randomIP := ""
+	if useSpoofedIP {
+		randomIP = generateRandomIP()
+		req.Header.Set("X-Forwarded-For", randomIP)
+		req.Header.Set("X-Real-IP", randomIP)
+	}
+
+	if useSpoofedIP {
+		LogDebug("Upstream request: model=%s, messages=%d, XFF=%s", targetModel, len(messages), randomIP)
+	} else {
+		LogDebug("Upstream request: model=%s, messages=%d", targetModel, len(messages))
+	}
 
 	var resp *fhttp.Response
 	if Cfg.BrowserBridgeURL != "" {
@@ -470,7 +494,11 @@ func makeUpstreamRequest(token string, messages []Message, model string, imageUR
 		return nil, "", err
 	}
 
-	LogDebug("Upstream response: status=%d, XFF=%s", resp.StatusCode, randomIP)
+	if useSpoofedIP {
+		LogDebug("Upstream response: status=%d, XFF=%s", resp.StatusCode, randomIP)
+	} else {
+		LogDebug("Upstream response: status=%d", resp.StatusCode)
+	}
 	return resp, targetModel, nil
 }
 
@@ -640,7 +668,7 @@ func getUpstreamToken() (string, error) {
 func HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// 只接受 POST 请求
 	if r.Method != http.MethodPost {
-		writeInvalidRequestError(w, "Only POST method is allowed")
+		writeInvalidRequestError(w, "只支持 POST 请求")
 		return
 	}
 
@@ -650,13 +678,13 @@ func HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if !Cfg.SkipAuthToken {
 		if apiKey == "" {
 			LogDebug("Missing Authorization header")
-			writeError(w, http.StatusUnauthorized, ErrTypeAuthentication, "Missing or invalid Authorization header", "invalid_api_key")
+			writeError(w, http.StatusUnauthorized, ErrTypeAuthentication, "缺少或无效的 Authorization 请求头", "invalid_api_key")
 			return
 		}
 		// 验证 API Key
 		if !ValidateAuthToken(apiKey) {
 			LogDebug("Invalid API key: %s...", apiKey[:min(8, len(apiKey))])
-			writeError(w, http.StatusUnauthorized, ErrTypeAuthentication, "Invalid API key", "invalid_api_key")
+			writeError(w, http.StatusUnauthorized, ErrTypeAuthentication, "无效的 API Key", "invalid_api_key")
 			return
 		}
 		LogDebug("API key validated: %s...", apiKey[:min(8, len(apiKey))])
@@ -789,7 +817,7 @@ func HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			lastError = result.ErrorMessage
 			LogWarn("Upstream returned error (attempt %d): %s", attempt+1, result.ErrorMessage)
 		} else if !result.HasContent {
-			lastError = "empty response"
+			lastError = "上游返回空响应"
 			LogWarn("Upstream returned empty content (attempt %d)", attempt+1)
 		}
 
@@ -825,7 +853,7 @@ func handleStreamResponse(w http.ResponseWriter, body io.ReadCloser, completionI
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		http.Error(w, "当前连接不支持流式响应", http.StatusInternalServerError)
 		return 0
 	}
 
@@ -1938,7 +1966,7 @@ func handleStreamResponseWithRetry(w http.ResponseWriter, body io.ReadCloser, co
 
 	if !hasContent {
 		result.OutputTokens = outputTokens
-		result.ErrorMessage = "empty response"
+		result.ErrorMessage = "上游返回空响应"
 		return result
 	}
 
@@ -2135,7 +2163,7 @@ func handleNonStreamResponseWithRetry(w http.ResponseWriter, body io.ReadCloser,
 	// 检查是否有内容
 	if fullContent == "" && fullReasoning == "" {
 		result.HasContent = false
-		result.ErrorMessage = "empty response"
+		result.ErrorMessage = "上游返回空响应"
 		return result
 	}
 

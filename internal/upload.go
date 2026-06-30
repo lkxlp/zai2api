@@ -283,9 +283,11 @@ func uploadToZAI(token string, data []byte, filename string, contentType string)
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	req.Header.Set("Sec-Gpc", "1")
 	req.Header.Set("DNT", "1")
-	randomIP := generateRandomIP()
-	req.Header.Set("X-Forwarded-For", randomIP)
-	req.Header.Set("X-Real-IP", randomIP)
+	if Cfg.CaptchaProviderURL == "" {
+		randomIP := generateRandomIP()
+		req.Header.Set("X-Forwarded-For", randomIP)
+		req.Header.Set("X-Real-IP", randomIP)
+	}
 
 	client, err := TLSHTTPClient(120 * time.Second)
 	if err != nil {

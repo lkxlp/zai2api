@@ -56,14 +56,14 @@ func adminWriteJSON(w http.ResponseWriter, status int, data interface{}) {
 // body: {"key": "..."}, 校验后种 cookie
 func HandleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		adminWriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		adminWriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "不支持的请求方法"})
 		return
 	}
 	var body struct {
 		Key string `json:"key"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		adminWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		adminWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "无效的请求体"})
 		return
 	}
 	if Cfg.SkipAuthToken {
@@ -108,7 +108,7 @@ func HandleAdminLogout(w http.ResponseWriter, r *http.Request) {
 // 返回总体状态：telemetry + token 计数 + captcha provider 状态
 func HandleAdminOverview(w http.ResponseWriter, r *http.Request) {
 	if !adminAuth(r) {
-		adminWriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		adminWriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "未授权"})
 		return
 	}
 
@@ -164,8 +164,8 @@ func HandleAdminOverview(w http.ResponseWriter, r *http.Request) {
 			"valid_token_count":   telemetry.ValidTokens,
 		},
 		"api_keys": map[string]interface{}{
-			"total":      len(GetApiKeyManager().List()),
-			"env_count":  len(Cfg.AuthTokens),
+			"total":     len(GetApiKeyManager().List()),
+			"env_count": len(Cfg.AuthTokens),
 		},
 		"captcha":     captchaStatus,
 		"model_stats": modelStats,
@@ -176,7 +176,7 @@ func HandleAdminOverview(w http.ResponseWriter, r *http.Request) {
 // 返回当前生效配置（脱敏 token）
 func HandleAdminConfig(w http.ResponseWriter, r *http.Request) {
 	if !adminAuth(r) {
-		adminWriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		adminWriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "未授权"})
 		return
 	}
 
@@ -210,7 +210,7 @@ func HandleAdminConfig(w http.ResponseWriter, r *http.Request) {
 // 返回 TokenManager 管理的 z.ai JWT token（可增删）
 func HandleAdminTokens(w http.ResponseWriter, r *http.Request) {
 	if !adminAuth(r) {
-		adminWriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		adminWriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "未授权"})
 		return
 	}
 
@@ -241,18 +241,18 @@ func HandleAdminTokens(w http.ResponseWriter, r *http.Request) {
 // body: {"token": "eyJ..."}
 func HandleAdminTokenAdd(w http.ResponseWriter, r *http.Request) {
 	if !adminAuth(r) {
-		adminWriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		adminWriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "未授权"})
 		return
 	}
 	if r.Method != http.MethodPost {
-		adminWriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		adminWriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "不支持的请求方法"})
 		return
 	}
 	var body struct {
 		Token string `json:"token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		adminWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		adminWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "无效的请求体"})
 		return
 	}
 	info, err := GetTokenManager().AddToken(body.Token)
@@ -272,18 +272,18 @@ func HandleAdminTokenAdd(w http.ResponseWriter, r *http.Request) {
 // body: {"token": "完整的 token"}
 func HandleAdminTokenDelete(w http.ResponseWriter, r *http.Request) {
 	if !adminAuth(r) {
-		adminWriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		adminWriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "未授权"})
 		return
 	}
 	if r.Method != http.MethodDelete && r.Method != http.MethodPost {
-		adminWriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		adminWriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "不支持的请求方法"})
 		return
 	}
 	var body struct {
 		Token string `json:"token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		adminWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		adminWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "无效的请求体"})
 		return
 	}
 	if err := GetTokenManager().RemoveToken(body.Token); err != nil {
@@ -297,18 +297,18 @@ func HandleAdminTokenDelete(w http.ResponseWriter, r *http.Request) {
 // body: {"token": "完整的 token"}
 func HandleAdminTokenValidate(w http.ResponseWriter, r *http.Request) {
 	if !adminAuth(r) {
-		adminWriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		adminWriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "未授权"})
 		return
 	}
 	if r.Method != http.MethodPost {
-		adminWriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		adminWriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "不支持的请求方法"})
 		return
 	}
 	var body struct {
 		Token string `json:"token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		adminWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		adminWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "无效的请求体"})
 		return
 	}
 	valid, err := GetTokenManager().ValidateTokenNow(body.Token)
@@ -323,7 +323,7 @@ func HandleAdminTokenValidate(w http.ResponseWriter, r *http.Request) {
 // 返回支持的模型列表及其上游映射
 func HandleAdminModels(w http.ResponseWriter, r *http.Request) {
 	if !adminAuth(r) {
-		adminWriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		adminWriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "未授权"})
 		return
 	}
 
@@ -355,11 +355,11 @@ func HandleAdminModels(w http.ResponseWriter, r *http.Request) {
 // 直接调用 chat completions 接口做连通性测试
 func HandleAdminTestModel(w http.ResponseWriter, r *http.Request) {
 	if !adminAuth(r) {
-		adminWriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		adminWriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "未授权"})
 		return
 	}
 	if r.Method != http.MethodPost {
-		adminWriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		adminWriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "不支持的请求方法"})
 		return
 	}
 
@@ -368,7 +368,7 @@ func HandleAdminTestModel(w http.ResponseWriter, r *http.Request) {
 		Prompt string `json:"prompt"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		adminWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		adminWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "无效的请求体"})
 		return
 	}
 	if body.Model == "" {
@@ -381,7 +381,7 @@ func HandleAdminTestModel(w http.ResponseWriter, r *http.Request) {
 	// 内部调用 makeUpstreamRequest
 	token, err := getUpstreamToken()
 	if err != nil {
-		adminWriteJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("get token: %v", err)})
+		adminWriteJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("获取 token 失败: %v", err)})
 		return
 	}
 
@@ -389,21 +389,25 @@ func HandleAdminTestModel(w http.ResponseWriter, r *http.Request) {
 	startedAt := time.Now()
 	resp, modelName, err := makeUpstreamRequest(token, messages, body.Model, nil, nil, false, nil)
 	if err != nil {
-		adminWriteJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("upstream: %v", err)})
+		adminWriteJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("上游请求失败: %v", err)})
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		upstreamBody, _ := io.ReadAll(resp.Body)
 		adminWriteJSON(w, http.StatusBadGateway, map[string]interface{}{
-			"error":  fmt.Sprintf("upstream status %d", resp.StatusCode),
+			"error":  fmt.Sprintf("上游状态码 %d", resp.StatusCode),
 			"status": resp.StatusCode,
+			"body":   string(upstreamBody),
 		})
 		return
 	}
 
 	// 简单读取流式响应，拼接 delta_content
 	var content strings.Builder
+	var reasoning strings.Builder
+	var lastPayload string
 	scanner := newSSEScanner(resp.Body)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -414,27 +418,57 @@ func HandleAdminTestModel(w http.ResponseWriter, r *http.Request) {
 		if payload == "[DONE]" {
 			break
 		}
+		lastPayload = payload
 		var u UpstreamData
 		if json.Unmarshal([]byte(payload), &u) != nil {
 			continue
 		}
 		if u.HasError() {
-			adminWriteJSON(w, http.StatusBadGateway, map[string]string{"error": u.GetErrorMessage()})
+			adminWriteJSON(w, http.StatusBadGateway, map[string]interface{}{
+				"error":        u.GetErrorMessage(),
+				"model":        modelName,
+				"elapsed_ms":   time.Since(startedAt).Milliseconds(),
+				"last_payload": payload,
+			})
 			return
+		}
+		if u.Data.Phase == "thinking" && u.Data.DeltaContent != "" {
+			reasoning.WriteString(u.Data.DeltaContent)
+			continue
 		}
 		if u.Data.DeltaContent != "" {
 			content.WriteString(u.Data.DeltaContent)
+		}
+		editContent := u.GetEditContent()
+		if editContent != "" {
+			if idx := strings.Index(editContent, "</details>"); idx != -1 {
+				afterDetails := editContent[idx+len("</details>"):]
+				content.WriteString(strings.TrimPrefix(afterDetails, "\n"))
+			} else if u.Data.Phase == "answer" || u.Data.Phase == "other" || u.Data.Phase == "tool_call" {
+				content.WriteString(editContent)
+			}
 		}
 		if u.Data.Done {
 			break
 		}
 	}
 
+	if content.Len() == 0 && reasoning.Len() == 0 {
+		adminWriteJSON(w, http.StatusBadGateway, map[string]interface{}{
+			"error":        "上游返回空响应",
+			"model":        modelName,
+			"elapsed_ms":   time.Since(startedAt).Milliseconds(),
+			"last_payload": lastPayload,
+		})
+		return
+	}
+
 	adminWriteJSON(w, http.StatusOK, map[string]interface{}{
-		"ok":         true,
-		"model":      modelName,
-		"content":    content.String(),
-		"elapsed_ms": time.Since(startedAt).Milliseconds(),
+		"ok":                true,
+		"model":             modelName,
+		"content":           content.String(),
+		"reasoning_content": reasoning.String(),
+		"elapsed_ms":        time.Since(startedAt).Milliseconds(),
 	})
 }
 
@@ -489,7 +523,7 @@ func (s *sseScanner) Text() string { return s.line }
 // HandleAdminKeysList GET /admin/api/keys
 func HandleAdminKeysList(w http.ResponseWriter, r *http.Request) {
 	if !adminAuth(r) {
-		adminWriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		adminWriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "未授权"})
 		return
 	}
 	keys := GetApiKeyManager().List()
@@ -516,11 +550,11 @@ func HandleAdminKeysList(w http.ResponseWriter, r *http.Request) {
 // body: {"name": "..."}
 func HandleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 	if !adminAuth(r) {
-		adminWriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		adminWriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "未授权"})
 		return
 	}
 	if r.Method != http.MethodPost {
-		adminWriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		adminWriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "不支持的请求方法"})
 		return
 	}
 	var body struct {
@@ -544,14 +578,14 @@ func HandleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 // body: {"key": "..."}
 func HandleAdminKeysDelete(w http.ResponseWriter, r *http.Request) {
 	if !adminAuth(r) {
-		adminWriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		adminWriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "未授权"})
 		return
 	}
 	var body struct {
 		Key string `json:"key"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		adminWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		adminWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "无效的请求体"})
 		return
 	}
 	if err := GetApiKeyManager().Delete(body.Key); err != nil {
@@ -565,11 +599,11 @@ func HandleAdminKeysDelete(w http.ResponseWriter, r *http.Request) {
 // body: {"key": "...", "enabled": true/false}
 func HandleAdminKeysToggle(w http.ResponseWriter, r *http.Request) {
 	if !adminAuth(r) {
-		adminWriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		adminWriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "未授权"})
 		return
 	}
 	if r.Method != http.MethodPost {
-		adminWriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		adminWriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "不支持的请求方法"})
 		return
 	}
 	var body struct {
@@ -577,7 +611,7 @@ func HandleAdminKeysToggle(w http.ResponseWriter, r *http.Request) {
 		Enabled bool   `json:"enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		adminWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		adminWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "无效的请求体"})
 		return
 	}
 	if err := GetApiKeyManager().SetEnabled(body.Key, body.Enabled); err != nil {

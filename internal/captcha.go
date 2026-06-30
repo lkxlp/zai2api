@@ -26,26 +26,26 @@ func fetchCaptchaToken() (string, error) {
 	client := &http.Client{Timeout: 35 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
-		return "", fmt.Errorf("captcha provider request failed: %w", err)
+		return "", fmt.Errorf("请求验证码服务失败: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("captcha provider read body failed: %w", err)
+		return "", fmt.Errorf("读取验证码服务响应失败: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("captcha provider status %d: %s", resp.StatusCode, string(body)[:min(200, len(body))])
+		return "", fmt.Errorf("验证码服务状态 %d: %s", resp.StatusCode, string(body)[:min(200, len(body))])
 	}
 
 	var result captchaProviderResponse
 	if err := json.Unmarshal(body, &result); err != nil {
-		return "", fmt.Errorf("captcha provider decode failed: %w", err)
+		return "", fmt.Errorf("解析验证码服务响应失败: %w", err)
 	}
 
 	if !result.OK {
-		return "", fmt.Errorf("captcha provider error: %s", result.Error)
+		return "", fmt.Errorf("验证码服务错误: %s", result.Error)
 	}
 
 	return result.Token, nil
